@@ -1,0 +1,28 @@
+market:
+  source: binance
+  symbol: BTCUSDT
+  interval: 1h
+  start: "2024-01-01T00:00:00Z"
+  end: "2024-02-01T00:00:00Z"
+
+common:
+  timezone: UTC
+  fee_rate: 0.0004
+  slippage_rate: 0.0005
+  quote_currency: USDT
+
+strategies:
+  - id: demo-1
+    type: template
+    initial_capital: 10000
+    parameters:
+      lookback: 20
+      threshold: 0.01
+
+output:
+  local_report: true
+  google_sheet_id: ${GOOGLE_SHEET_ID}
+  equity_curve_sampling: 1
+  write_trade_log: true
+  create_charts: true
+
