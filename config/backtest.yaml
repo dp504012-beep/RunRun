@@ -1,0 +1,43 @@
+market:
+  source: binance
+  symbol: BTCUSDT
+  interval: 1h
+  start: "2024-01-01T00:00:00Z"
+  end: "2024-01-02T00:00:00Z"
+
+common:
+  timezone: UTC
+  fee_rate: 0.0004
+  slippage_rate: 0.0
+  quote_currency: USDT
+
+strategies:
+  - id: spot-btc
+    type: btc_buy_and_hold
+    initial_capital: 10000
+    parameters:
+      include_exit_fee: true
+
+  - id: leverage-2x
+    type: fixed_leverage_long
+    initial_capital: 10000
+    parameters:
+      leverage: 2
+      liquidation_model: simplified
+
+  - id: grid-10x
+    type: long_grid
+    initial_capital: 10000
+    parameters:
+      leverage: 10
+      lower_bound: 40000
+      upper_bound: 50000
+      grid_count: 20
+      liquidation_model: simplified
+
+output:
+  local_report: true
+  google_sheet_id: null
+  equity_curve_sampling: 1
+  write_trade_log: true
+  create_charts: true

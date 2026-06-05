@@ -69,7 +69,7 @@ def generate_local_report(
     )
 
     summary_rows = [_summary_row(result) for result in results]
-    _write_json(paths.config_snapshot, _to_jsonable(config))
+    _write_json(paths.config_snapshot, _config_snapshot(config=config, run_id=paths.run_id, created_at=created_at))
     _write_performance_summary(paths.performance_summary_csv, summary_rows)
     _write_equity_curve(paths.equity_curve_csv, results)
     _write_trade_log(paths.trade_log_csv, results)
@@ -94,6 +94,8 @@ def _summary_row(result: BacktestResult) -> dict[str, Any]:
     strategy_id = _strategy_id(result)
     return {
         "strategy_id": strategy_id,
+        "status": result.metrics.get("status", "success"),
+        "error": result.metrics.get("error", ""),
         "strategy_type": result.metrics.get("strategy_type", ""),
         "initial_capital": result.initial_capital,
         "final_equity": result.final_equity,
@@ -227,11 +229,15 @@ def _write_comparison_chart(path: Path, title: str, values: list[tuple[str, Any]
 
 def _line_chart_svg(title: str, series: list[tuple[str, list[EquityPoint]]], values: list[float]) -> str:
     width, height, pad = 840, 360, 48
+    if not values:
+        return _svg_shell(width, height, title, '<text x="48" y="180" font-size="14">No successful equity curves</text>')
     min_value, max_value = min(values), max(values)
     span = max(max_value - min_value, 1.0)
     colors = ["#2563eb", "#dc2626", "#059669", "#9333ea"]
     polylines = []
     for index, (label, points) in enumerate(series):
+        if not points:
+            continue
         if len(points) == 1:
             x_values = [pad]
         else:
@@ -293,6 +299,8 @@ def _collect_assumptions(results: Sequence[BacktestResult]) -> list[str]:
 
 
 def _strategy_id(result: BacktestResult) -> str:
+    if "strategy_id" in result.metrics:
+        return str(result.metrics["strategy_id"])
     if result.trades:
         return result.trades[0].strategy_id
     return str(result.metrics.get("strategy_id", "unknown"))
@@ -314,6 +322,13 @@ def _trade_row(trade: TradeRecord) -> dict[str, Any]:
 
 def _write_json(path: Path, data: Any) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _config_snapshot(*, config: BacktestConfig, run_id: str, created_at: datetime) -> dict[str, Any]:
+    snapshot = _to_jsonable(config)
+    snapshot["_run_id"] = run_id
+    snapshot["_created_at"] = _iso(created_at)
+    return snapshot
 
 
 def _to_jsonable(value: Any) -> Any:
