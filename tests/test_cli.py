@@ -46,16 +46,23 @@ def test_update_data_help_executes() -> None:
     assert "--end" in result.stdout
 
 
-def test_cli_command_reports_not_implemented() -> None:
+def test_export_sheets_help_executes() -> None:
     result = subprocess.run(
-        [sys.executable, "-m", "src.cli", "export-sheets"],
+        [
+            sys.executable,
+            "-m",
+            "src.cli",
+            "export-sheets",
+            "--help",
+        ],
         capture_output=True,
         text=True,
         check=False,
     )
 
     assert result.returncode == 0
-    assert "not implemented" in result.stderr
+    assert "--run-dir" in result.stdout
+    assert "--spreadsheet-id" in result.stdout
 
 
 def test_validate_data_help_executes() -> None:

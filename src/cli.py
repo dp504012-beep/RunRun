@@ -14,6 +14,7 @@ from src.data.binance_client import INTERVAL_TO_MS, download_spot_klines
 from src.data.parquet_store import ParquetKlineStore, update_parquet_store
 from src.exceptions import BacktesterError, ConfigurationError
 from src.logging_config import configure_logging
+from src.outputs.google_sheets import export_local_report_to_google_sheets
 
 logger = logging.getLogger(__name__)
 
@@ -70,8 +71,13 @@ def build_parser() -> argparse.ArgumentParser:
     validate_data_parser.add_argument("--end", required=True, type=_parse_utc_datetime)
     validate_data_parser.add_argument("--data-root", default=Path("data/parquet"), type=Path)
 
-    for command in ("export-sheets",):
-        subparsers.add_parser(command, help="not implemented")
+    export_sheets_parser = subparsers.add_parser("export-sheets", help="export a local run to Google Sheets")
+    export_sheets_parser.add_argument("--run-dir", required=True, type=Path)
+    export_sheets_parser.add_argument("--spreadsheet-id", required=True)
+    export_sheets_parser.add_argument("--equity-sampling", default="6h", type=_parse_equity_sampling)
+    export_sheets_parser.add_argument("--max-trade-rows", default=5000, type=_parse_positive_int)
+    export_sheets_parser.add_argument("--create-charts", dest="create_charts", action="store_true", default=True)
+    export_sheets_parser.add_argument("--no-create-charts", dest="create_charts", action="store_false")
 
     run_parser = subparsers.add_parser("run", help="run a backtest config")
     run_parser.add_argument("config_path", nargs="?", default="config/backtest.yaml")
@@ -93,6 +99,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "validate-data":
         return _handle_validate_data(args)
+
+    if args.command == "export-sheets":
+        return _handle_export_sheets(args)
 
     if args.command == "run":
         try:
@@ -158,6 +167,24 @@ def _handle_validate_data(args: argparse.Namespace) -> int:
 
     _print_validate_data_result(result)
     return 0 if result.error_count == 0 else 1
+
+
+def _handle_export_sheets(args: argparse.Namespace) -> int:
+    try:
+        result = export_local_report_to_google_sheets(
+            run_dir=args.run_dir,
+            spreadsheet_id=args.spreadsheet_id,
+            equity_sampling=args.equity_sampling,
+            max_trade_rows=args.max_trade_rows,
+            create_charts=args.create_charts,
+        )
+    except (BacktesterError, OSError) as exc:
+        logger.error("export-sheets failed: %s", exc)
+        print(f"export-sheets failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+
+    _print_export_sheets_result(result)
+    return 0
 
 
 def execute_update_data(
@@ -350,6 +377,23 @@ def _print_validate_data_result(result: ValidateDataResult) -> None:
             print(f"{prefix} {issue.code} {issue.open_time.isoformat().replace('+00:00', 'Z')}: {issue.message}")
 
 
+def _print_export_sheets_result(result: object) -> None:
+    print(f"spreadsheet_id: {getattr(result, 'spreadsheet_id')}")
+    print(f"spreadsheet_url: {getattr(result, 'spreadsheet_url')}")
+    print(f"run_id: {getattr(result, 'run_id')}")
+    print(f"updated_sheets: {', '.join(getattr(result, 'updated_sheets'))}")
+    row_counts = getattr(result, 'row_counts')
+    for sheet_name in getattr(result, 'updated_sheets'):
+        print(f"rows[{sheet_name}]: {row_counts.get(sheet_name, 0)}")
+    print(f"trade_log_truncated: {getattr(result, 'trade_log_truncated')}")
+    print(f"equity_sampling: {getattr(result, 'equity_sampling')}")
+    print(f"dashboard: {getattr(result, 'dashboard_status')}")
+    print(f"chart_count: {getattr(result, 'chart_count')}")
+    for chart in getattr(result, 'chart_summaries'):
+        print(f"chart: {chart.get('name')} ({chart.get('type')})")
+    print("status: SUCCESS")
+
+
 def _parse_symbol(value: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise argparse.ArgumentTypeError("symbol cannot be empty")
@@ -375,6 +419,23 @@ def _parse_utc_datetime(value: str) -> datetime:
     if parsed.tzinfo is None:
         raise argparse.ArgumentTypeError("datetime must include timezone")
     return parsed.astimezone(UTC)
+
+
+def _parse_equity_sampling(value: str) -> str:
+    normalized = value.strip()
+    if normalized not in {"1h", "6h", "1d"}:
+        raise argparse.ArgumentTypeError("equity sampling must be one of: 1h, 6h, 1d")
+    return normalized
+
+
+def _parse_positive_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("max-trade-rows must be an integer") from exc
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("max-trade-rows must be greater than 0")
+    return parsed
 
 
 if __name__ == "__main__":
