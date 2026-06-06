@@ -1,0 +1,4 @@
+interface:
+  display_name: "Run Local Crypto Backtest"
+  short_description: "Turn backtest requests into the local BTC workflow"
+  default_prompt: "Use $run-local-crypto-backtest to convert a natural-language crypto backtest request into config changes and the approved local CLI sequence without changing core Python code."
