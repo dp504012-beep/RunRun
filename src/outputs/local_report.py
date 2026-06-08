@@ -31,6 +31,7 @@ class LocalReportPaths:
     return_comparison_chart: Path
     max_drawdown_comparison_chart: Path
     warnings_and_limitations: Path
+    natural_language_summary: Path
 
 
 def generate_local_report(
@@ -66,6 +67,7 @@ def generate_local_report(
         return_comparison_chart=report_dir / f"return_comparison_{run_id}.svg",
         max_drawdown_comparison_chart=report_dir / f"max_drawdown_comparison_{run_id}.svg",
         warnings_and_limitations=report_dir / f"warnings_limitations_{run_id}.txt",
+        natural_language_summary=report_dir / f"natural_language_summary_{run_id}.txt",
     )
 
     summary_rows = [_summary_row(result) for result in results]
@@ -73,6 +75,7 @@ def generate_local_report(
     _write_performance_summary(paths.performance_summary_csv, summary_rows)
     _write_equity_curve(paths.equity_curve_csv, results)
     _write_trade_log(paths.trade_log_csv, results)
+    _write_natural_language_summary(paths.natural_language_summary, config, results)
     _write_warnings_and_limitations(paths.warnings_and_limitations, warnings or [], model_limitations or DEFAULT_MODEL_LIMITATIONS)
     _write_equity_curve_chart(paths.equity_curve_chart, results)
     _write_comparison_chart(paths.return_comparison_chart, "Total Return", [(row["strategy_id"], row["total_return"]) for row in summary_rows])
@@ -85,6 +88,7 @@ def generate_local_report(
         summary_rows=summary_rows,
         warnings=warnings or [],
         model_limitations=model_limitations or DEFAULT_MODEL_LIMITATIONS,
+        natural_language_summary=paths.natural_language_summary.read_text(encoding="utf-8"),
     )
     return paths
 
@@ -92,7 +96,7 @@ def generate_local_report(
 def _summary_row(result: BacktestResult) -> dict[str, Any]:
     performance = result.metrics.get("performance_summary", {})
     strategy_id = _strategy_id(result)
-    return {
+    row = {
         "strategy_id": strategy_id,
         "status": result.metrics.get("status", "success"),
         "error": result.metrics.get("error", ""),
@@ -110,6 +114,29 @@ def _summary_row(result: BacktestResult) -> dict[str, Any]:
         "estimated_exit_fee": result.metrics.get("estimated_exit_fee"),
         "estimated_exit_net_equity": result.metrics.get("estimated_exit_net_equity"),
     }
+    for key in [
+        "total_entries",
+        "first_entry_price",
+        "last_entry_price",
+        "average_entry_price",
+        "take_profit_price",
+        "stop_loss_price",
+        "exit_time",
+        "exit_price",
+        "exit_reason",
+        "gross_price_pnl",
+        "total_entry_fees",
+        "exit_fee",
+        "funding_fee",
+        "maximum_unrealized_loss",
+        "maximum_unrealized_loss_percent",
+        "capital_used",
+        "capital_remaining",
+        "liquidated",
+        "liquidation_time",
+    ]:
+        row[key] = result.metrics.get(key)
+    return row
 
 
 def _write_performance_summary(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -131,12 +158,35 @@ def _write_equity_curve(path: Path, results: Sequence[BacktestResult]) -> None:
 
 
 def _write_trade_log(path: Path, results: Sequence[BacktestResult]) -> None:
+    metadata_fields = [
+        "entry_sequence",
+        "entry_type",
+        "trigger_price",
+        "fill_price",
+        "notional",
+        "average_price_after",
+        "take_profit_price_after",
+        "stop_loss_price_after",
+        "available_capital_after",
+        "unique_level_id",
+        "exit_time",
+        "exit_price",
+        "exit_reason",
+        "exit_quantity",
+        "exit_fee",
+        "gross_pnl",
+        "net_pnl",
+    ]
+    fields = ["strategy_id", "timestamp", "symbol", "side", "quantity", "price", "fee", "pnl", "notes", *metadata_fields]
     with path.open("w", encoding="utf-8", newline="") as file:
-        writer = csv.DictWriter(file, fieldnames=["strategy_id", "timestamp", "symbol", "side", "quantity", "price", "fee", "pnl", "notes"])
+        writer = csv.DictWriter(file, fieldnames=fields)
         writer.writeheader()
         for result in results:
             for trade in result.trades:
-                writer.writerow(_trade_row(trade))
+                row = _trade_row(trade)
+                for field in metadata_fields:
+                    row[field] = trade.metadata.get(field, "")
+                writer.writerow(row)
 
 
 def _write_warnings_and_limitations(path: Path, warnings: Sequence[str], model_limitations: Sequence[str]) -> None:
@@ -156,6 +206,7 @@ def _write_html_report(
     summary_rows: list[dict[str, Any]],
     warnings: Sequence[str],
     model_limitations: Sequence[str],
+    natural_language_summary: str,
 ) -> None:
     rows_html = "".join(
         "<tr>"
@@ -187,6 +238,9 @@ def _write_html_report(
   <p>Data source: <strong>{escape(config.market.source)}</strong></p>
   <p>Data period: <strong>{escape(_iso(config.market.start))}</strong> to <strong>{escape(_iso(config.market.end))}</strong></p>
   <p>Symbol / interval: <strong>{escape(config.market.symbol)} / {escape(config.market.interval)}</strong></p>
+
+  <h2>Natural Language Summary</h2>
+  <pre>{escape(natural_language_summary)}</pre>
 
   <h2>Performance Summary</h2>
   <table><thead><tr>{headers_html}</tr></thead><tbody>{rows_html}</tbody></table>
@@ -296,6 +350,54 @@ def _collect_assumptions(results: Sequence[BacktestResult]) -> list[str]:
         for item in result.metrics.get("assumptions", []):
             assumptions.append(f"{strategy_id}: {item}")
     return assumptions
+
+
+def _write_natural_language_summary(path: Path, config: BacktestConfig, results: Sequence[BacktestResult]) -> None:
+    lines = [
+        f"Backtest market: {config.market.symbol} {config.market.interval}, {_iso(config.market.start)} to {_iso(config.market.end)}.",
+        "This is historical backtest output, not a prediction or investment recommendation.",
+        "",
+    ]
+    for result in results:
+        strategy_id = _strategy_id(result)
+        if result.metrics.get("status") == "failed":
+            lines.append(f"{strategy_id}: failed - {result.metrics.get('error', '')}")
+            continue
+        if result.metrics.get("strategy_type") == "dca_long":
+            lines.extend(
+                [
+                    f"{strategy_id}: DCA long used initial capital {result.initial_capital:.2f}.",
+                    f"First entry price { _fmt(result.metrics.get('first_entry_price')) }, each DCA amount { _fmt(result.metrics.get('capital_used', 0) / max(result.metrics.get('total_entries', 1), 1)) }, actual entries {result.metrics.get('total_entries')}.",
+                    f"Last entry price { _fmt(result.metrics.get('last_entry_price')) }, average cost { _fmt(result.metrics.get('average_entry_price')) }, final take-profit price { _fmt(result.metrics.get('take_profit_price')) }.",
+                    f"Exit reason {result.metrics.get('exit_reason')}, exit price { _fmt(result.metrics.get('exit_price')) }, gross price PnL { _fmt(result.metrics.get('gross_price_pnl')) }.",
+                    f"Total fees { _fmt(result.metrics.get('total_fees')) }, funding fee { _fmt(result.metrics.get('funding_fee')) }, net PnL { _fmt((result.final_equity or 0) - result.initial_capital) }.",
+                    f"Final equity { _fmt(result.final_equity) }, net return { _pct(result.total_return) }, maximum unrealized loss { _fmt(result.metrics.get('maximum_unrealized_loss')) }, max drawdown { _pct(result.max_drawdown) }.",
+                ]
+            )
+        else:
+            lines.append(
+                f"{strategy_id}: final equity { _fmt(result.final_equity) }, total return { _pct(result.total_return) }, max drawdown { _pct(result.max_drawdown) }."
+            )
+        lines.append("")
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def _fmt(value: Any) -> str:
+    if value is None:
+        return "None"
+    try:
+        return f"{float(value):.2f}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _pct(value: Any) -> str:
+    if value is None:
+        return "None"
+    try:
+        return f"{float(value) * 100:.2f}%"
+    except (TypeError, ValueError):
+        return str(value)
 
 
 def _strategy_id(result: BacktestResult) -> str:

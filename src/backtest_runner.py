@@ -13,6 +13,7 @@ from src.data.quality import query_backtest_klines
 from src.exceptions import DataValidationError, MarketDataError
 from src.outputs.local_report import LocalReportPaths, generate_local_report
 from src.strategies.buy_and_hold import run_btc_buy_and_hold
+from src.strategies.dca import run_dca_long
 from src.strategies.fixed_leverage_long import run_fixed_leverage_long
 from src.strategies.long_grid import run_long_grid
 
@@ -37,6 +38,12 @@ STRATEGY_RUNNERS: dict[str, StrategyRunner] = {
         finished_at=finished_at,
     ),
     "long_grid": lambda config, strategy, klines, finished_at: run_long_grid(
+        config=config,
+        strategy=strategy,
+        klines=klines,
+        finished_at=finished_at,
+    ),
+    "dca_long": lambda config, strategy, klines, finished_at: run_dca_long(
         config=config,
         strategy=strategy,
         klines=klines,

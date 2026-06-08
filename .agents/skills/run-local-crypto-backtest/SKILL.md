@@ -14,7 +14,7 @@ description: Turn natural-language crypto backtest requests into the existing lo
 
 ## Workflow
 
-1. Extract `symbol`, `interval`, `start/end`, strategy list, capital, leverage, grid limits/count, fees, funding assumptions, and optional `spreadsheet_id`.
+1. Extract `symbol`, `interval`, `start/end`, strategy list, capital, leverage, grid limits/count, DCA settings, fees, funding assumptions, and optional `spreadsheet_id`.
 2. Convert relative dates to explicit UTC timestamps and stop on ambiguous inputs.
 3. Update only `config/backtest.yaml` unless the user explicitly requests a different config path.
 4. Run in order:
@@ -25,6 +25,38 @@ description: Turn natural-language crypto backtest requests into the existing lo
    - `python -m src.cli export-sheets ...` only when Sheets export is requested and credentials are available
 5. Stop at the first failure. Do not reuse an old `run_id` or an old report directory.
 6. Report exact inputs, outputs, `run_id`, report path, and any model assumptions or limits.
+
+## DCA Long Parsing
+
+When the user describes staged buying, falling-price add-ons, average-cost exits, or DCA, map it to:
+
+```yaml
+type: dca_long
+```
+
+Use YAML as the only formal parameter source. Do not create a Python `CONFIG`, SQLite workflow, CSV workflow, or separate script.
+
+Accepted DCA fields:
+
+- `first_entry_percent`
+- `dca_drop_percent`
+- `dca_entry_percent`
+- `max_entries`
+- `take_profit_percent`
+- `stop_loss_percent`
+- `entry_fee_rate`
+- `exit_fee_rate`
+- `funding_rate_mode`
+
+Percent values use whole-percent numbers in YAML. For example, `19` means `19%`; do not silently switch it to `0.19` unless the user explicitly asks for decimal-style config.
+
+First version default:
+
+- local report only
+- no Google Sheets export
+- no SQLite
+- no separate data source
+- use runner-provided Parquet Klines
 
 ## Local-Report Summary
 

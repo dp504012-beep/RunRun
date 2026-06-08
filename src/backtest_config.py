@@ -13,7 +13,7 @@ import yaml
 from src.exceptions import ConfigurationError
 
 ENV_PATTERN = re.compile(r"\$\{([A-Z0-9_]+)\}")
-SUPPORTED_STRATEGY_TYPES = {"template", "btc_buy_and_hold", "fixed_leverage_long", "long_grid"}
+SUPPORTED_STRATEGY_TYPES = {"template", "btc_buy_and_hold", "fixed_leverage_long", "long_grid", "dca_long"}
 
 
 @dataclass(slots=True)
@@ -193,6 +193,12 @@ def _parse_strategies(raw: Any) -> list[StrategyConfig]:
             parameters = {}
         if not isinstance(parameters, dict):
             raise ConfigurationError(f"strategies[{index}].parameters 必須是 mapping。")
+        inline_parameters = {
+            key: value
+            for key, value in data.items()
+            if key not in {"id", "type", "initial_capital", "parameters"}
+        }
+        parameters = {**parameters, **inline_parameters}
 
         strategies.append(
             StrategyConfig(
