@@ -115,7 +115,26 @@ def _summary_row(result: BacktestResult) -> dict[str, Any]:
         "estimated_exit_net_equity": result.metrics.get("estimated_exit_net_equity"),
     }
     for key in [
+        "cycle_mode",
+        "capital_mode",
+        "max_cycles",
+        "total_cycles",
+        "completed_cycles",
+        "profitable_cycles",
+        "losing_cycles",
+        "take_profit_cycles",
+        "stop_loss_cycles",
+        "end_of_backtest_cycles",
+        "average_cycle_return",
+        "best_cycle_return",
+        "worst_cycle_return",
+        "average_entries_per_cycle",
+        "max_entries_in_a_cycle",
         "total_entries",
+        "total_exits",
+        "first_cycle_start",
+        "last_cycle_end",
+        "account_stop_reason",
         "first_entry_price",
         "last_entry_price",
         "average_entry_price",
@@ -128,6 +147,7 @@ def _summary_row(result: BacktestResult) -> dict[str, Any]:
         "total_entry_fees",
         "exit_fee",
         "funding_fee",
+        "total_funding_fee",
         "maximum_unrealized_loss",
         "maximum_unrealized_loss_percent",
         "capital_used",
@@ -159,8 +179,14 @@ def _write_equity_curve(path: Path, results: Sequence[BacktestResult]) -> None:
 
 def _write_trade_log(path: Path, results: Sequence[BacktestResult]) -> None:
     metadata_fields = [
+        "cycle_id",
+        "cycle_entry_sequence",
+        "global_trade_sequence",
+        "cycle_start_time",
+        "cycle_start_capital",
         "entry_sequence",
         "entry_type",
+        "fill_time",
         "trigger_price",
         "fill_price",
         "notional",
@@ -176,6 +202,12 @@ def _write_trade_log(path: Path, results: Sequence[BacktestResult]) -> None:
         "exit_fee",
         "gross_pnl",
         "net_pnl",
+        "cycle_gross_pnl",
+        "cycle_fees",
+        "cycle_funding_fee",
+        "cycle_net_pnl",
+        "cycle_return",
+        "cycle_ending_equity",
     ]
     fields = ["strategy_id", "timestamp", "symbol", "side", "quantity", "price", "fee", "pnl", "notes", *metadata_fields]
     with path.open("w", encoding="utf-8", newline="") as file:
@@ -364,16 +396,30 @@ def _write_natural_language_summary(path: Path, config: BacktestConfig, results:
             lines.append(f"{strategy_id}: failed - {result.metrics.get('error', '')}")
             continue
         if result.metrics.get("strategy_type") == "dca_long":
-            lines.extend(
-                [
-                    f"{strategy_id}: DCA long used initial capital {result.initial_capital:.2f}.",
-                    f"First entry price { _fmt(result.metrics.get('first_entry_price')) }, each DCA amount { _fmt(result.metrics.get('capital_used', 0) / max(result.metrics.get('total_entries', 1), 1)) }, actual entries {result.metrics.get('total_entries')}.",
-                    f"Last entry price { _fmt(result.metrics.get('last_entry_price')) }, average cost { _fmt(result.metrics.get('average_entry_price')) }, final take-profit price { _fmt(result.metrics.get('take_profit_price')) }.",
-                    f"Exit reason {result.metrics.get('exit_reason')}, exit price { _fmt(result.metrics.get('exit_price')) }, gross price PnL { _fmt(result.metrics.get('gross_price_pnl')) }.",
-                    f"Total fees { _fmt(result.metrics.get('total_fees')) }, funding fee { _fmt(result.metrics.get('funding_fee')) }, net PnL { _fmt((result.final_equity or 0) - result.initial_capital) }.",
-                    f"Final equity { _fmt(result.final_equity) }, net return { _pct(result.total_return) }, maximum unrealized loss { _fmt(result.metrics.get('maximum_unrealized_loss')) }, max drawdown { _pct(result.max_drawdown) }.",
-                ]
-            )
+            if result.metrics.get("cycle_mode") == "repeat":
+                lines.extend(
+                    [
+                        f"{strategy_id}: DCA long repeat mode ran {result.metrics.get('total_cycles')} cycles using {result.metrics.get('capital_mode')} capital mode.",
+                        f"Completed cycles {result.metrics.get('completed_cycles')}; profitable {result.metrics.get('profitable_cycles')}, losing {result.metrics.get('losing_cycles')}.",
+                        f"Take-profit cycles {result.metrics.get('take_profit_cycles')}, stop-loss cycles {result.metrics.get('stop_loss_cycles')}, end-of-backtest cycles {result.metrics.get('end_of_backtest_cycles')}.",
+                        f"Total entries {result.metrics.get('total_entries')}, average entries per cycle { _fmt(result.metrics.get('average_entries_per_cycle')) }, max entries in one cycle {result.metrics.get('max_entries_in_a_cycle')}.",
+                        f"Best cycle return { _pct(result.metrics.get('best_cycle_return')) }, worst cycle return { _pct(result.metrics.get('worst_cycle_return')) }.",
+                        f"Initial capital { _fmt(result.initial_capital) }, final equity { _fmt(result.final_equity) }, net PnL { _fmt((result.final_equity or 0) - result.initial_capital) }, total return { _pct(result.total_return) }.",
+                        f"Total fees { _fmt(result.metrics.get('total_fees')) }, funding fee { _fmt(result.metrics.get('total_funding_fee')) }, maximum unrealized loss { _fmt(result.metrics.get('maximum_unrealized_loss')) }, max drawdown { _pct(result.max_drawdown) }.",
+                        f"Account stop reason {result.metrics.get('account_stop_reason') or 'none'}.",
+                    ]
+                )
+            else:
+                lines.extend(
+                    [
+                        f"{strategy_id}: DCA long used initial capital {result.initial_capital:.2f}.",
+                        f"First entry price { _fmt(result.metrics.get('first_entry_price')) }, each DCA amount { _fmt(result.metrics.get('capital_used', 0) / max(result.metrics.get('total_entries', 1), 1)) }, actual entries {result.metrics.get('total_entries')}.",
+                        f"Last entry price { _fmt(result.metrics.get('last_entry_price')) }, average cost { _fmt(result.metrics.get('average_entry_price')) }, final take-profit price { _fmt(result.metrics.get('take_profit_price')) }.",
+                        f"Exit reason {result.metrics.get('exit_reason')}, exit price { _fmt(result.metrics.get('exit_price')) }, gross price PnL { _fmt(result.metrics.get('gross_price_pnl')) }.",
+                        f"Total fees { _fmt(result.metrics.get('total_fees')) }, funding fee { _fmt(result.metrics.get('funding_fee')) }, net PnL { _fmt((result.final_equity or 0) - result.initial_capital) }.",
+                        f"Final equity { _fmt(result.final_equity) }, net return { _pct(result.total_return) }, maximum unrealized loss { _fmt(result.metrics.get('maximum_unrealized_loss')) }, max drawdown { _pct(result.max_drawdown) }.",
+                    ]
+                )
         else:
             lines.append(
                 f"{strategy_id}: final equity { _fmt(result.final_equity) }, total return { _pct(result.total_return) }, max drawdown { _pct(result.max_drawdown) }."

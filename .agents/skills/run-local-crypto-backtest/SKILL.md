@@ -38,15 +38,37 @@ Use YAML as the only formal parameter source. Do not create a Python `CONFIG`, S
 
 Accepted DCA fields:
 
+- `cycle_mode`
+- `capital_mode`
+- `max_cycles`
 - `first_entry_percent`
 - `dca_drop_percent`
 - `dca_entry_percent`
 - `max_entries`
 - `take_profit_percent`
 - `stop_loss_percent`
+- `account_stop_loss_percent`
+- `account_take_profit_percent`
 - `entry_fee_rate`
 - `exit_fee_rate`
 - `funding_rate_mode`
+
+Cycle parsing:
+
+- If the user asks for one DCA round only, set `cycle_mode: single`.
+- If the user asks to keep repeating DCA, restart after take profit, continue until the backtest ends, or similar wording, set:
+
+```yaml
+type: dca_long
+cycle_mode: repeat
+capital_mode: rolling
+max_cycles: null
+```
+
+- In `repeat` mode, a cycle that exits on one K line may only restart on the next K line open. Never restart on the same K line.
+- `capital_mode: rolling` means the next cycle sizes entries from the latest total equity.
+- `capital_mode: fixed_initial` means each cycle sizes entries from the original `initial_capital`, while total equity still accumulates.
+- Confirm or explicitly set whether `max_cycles`, `account_stop_loss_percent`, and `account_take_profit_percent` are disabled or active.
 
 Percent values use whole-percent numbers in YAML. For example, `19` means `19%`; do not silently switch it to `0.19` unless the user explicitly asks for decimal-style config.
 

@@ -262,3 +262,120 @@ output:
         trade_rows = list(csv.DictReader(file))
     assert "entry_sequence" in trade_rows[0]
     assert "DCA long" in execution.report_paths.natural_language_summary.read_text(encoding="utf-8")
+
+
+def test_single_mode_runs_only_one_cycle() -> None:
+    result = _run(
+        [
+            _kline(0, open_price="100", high="104", low="100", close="103"),
+            _kline(1, open_price="103", high="107", low="103", close="106"),
+        ],
+        _strategy(cycle_mode="single"),
+    )
+
+    assert result.metrics["total_cycles"] == 1
+    assert result.metrics["cycle_mode"] == "single"
+
+
+def test_repeat_mode_reopens_on_next_kline_and_not_same_kline() -> None:
+    result = _run(
+        [
+            _kline(0, open_price="100", high="104", low="100", close="103"),
+            _kline(1, open_price="103", high="103", low="103", close="103"),
+            _kline(2, open_price="103", high="107", low="97.85", close="106"),
+            _kline(3, open_price="104", high="104", low="104", close="104"),
+            _kline(4, open_price="104", high="104", low="104", close="101"),
+        ],
+        _strategy(cycle_mode="repeat", capital_mode="rolling", dca_drop_percent=5, take_profit_percent=3),
+    )
+
+    buys = [trade for trade in result.trades if trade.side == "buy"]
+    sells = [trade for trade in result.trades if trade.side == "sell"]
+    assert result.metrics["total_cycles"] == 3
+    assert result.metrics["take_profit_cycles"] == 2
+    assert result.metrics["end_of_backtest_cycles"] == 1
+    assert result.metrics["cycle_results"][1]["entries"] == 2
+    assert buys[1].timestamp == datetime(2026, 1, 1, 1, 0, tzinfo=UTC)
+    assert buys[1].price == pytest.approx(103.0)
+    assert buys[2].price == pytest.approx(97.85)
+    assert buys[3].timestamp == datetime(2026, 1, 1, 3, 0, tzinfo=UTC)
+    assert not any(trade.side == "buy" and trade.timestamp == sells[0].timestamp and trade.metadata["cycle_id"] == 2 for trade in result.trades)
+    assert len({point.timestamp for point in result.equity_curve}) == len(result.equity_curve)
+
+
+def test_rolling_and_fixed_initial_cycle_capital_modes() -> None:
+    klines = [
+        _kline(0, open_price="100", high="104", low="100", close="103"),
+        _kline(1, open_price="103", high="103", low="103", close="103"),
+        _kline(2, open_price="103", high="107", low="103", close="106"),
+    ]
+    rolling = _run(klines, _strategy(cycle_mode="repeat", capital_mode="rolling"))
+    fixed = _run(klines, _strategy(cycle_mode="repeat", capital_mode="fixed_initial"))
+
+    rolling_second_initial = [trade for trade in rolling.trades if trade.side == "buy"][1]
+    fixed_second_initial = [trade for trade in fixed.trades if trade.side == "buy"][1]
+    assert rolling_second_initial.metadata["notional"] > 200
+    assert fixed_second_initial.metadata["notional"] == pytest.approx(200)
+
+
+def test_repeat_mode_stop_conditions_and_final_candle_no_reopen() -> None:
+    result = _run(
+        [
+            _kline(0, open_price="100", high="104", low="100", close="103"),
+            _kline(1, open_price="103", high="107", low="103", close="106"),
+            _kline(2, open_price="106", high="110", low="106", close="109"),
+        ],
+        _strategy(cycle_mode="repeat", max_cycles=2),
+    )
+    assert result.metrics["total_cycles"] == 2
+    assert result.metrics["account_stop_reason"] == "max_cycles"
+
+    no_reopen = _run(
+        [
+            _kline(0, open_price="100", high="104", low="100", close="103"),
+            _kline(1, open_price="103", high="107", low="103", close="106"),
+        ],
+        _strategy(cycle_mode="repeat"),
+    )
+    assert no_reopen.metrics["total_cycles"] == 1
+
+
+def test_account_stop_loss_and_take_profit_stop_new_cycles() -> None:
+    take_profit = _run(
+        [
+            _kline(0, open_price="100", high="104", low="100", close="103"),
+            _kline(1, open_price="103", high="107", low="103", close="106"),
+        ],
+        _strategy(cycle_mode="repeat", account_take_profit_percent=0.001),
+    )
+    assert take_profit.metrics["total_cycles"] == 1
+    assert take_profit.metrics["account_stop_reason"] == "account_take_profit"
+
+    stop_loss = _run(
+        [
+            _kline(0, open_price="100", high="100", low="98", close="99"),
+            _kline(1, open_price="99", high="103", low="99", close="102"),
+        ],
+        _strategy(cycle_mode="repeat", stop_loss_percent=1, account_stop_loss_percent=0.001),
+    )
+    assert stop_loss.metrics["total_cycles"] == 1
+    assert stop_loss.metrics["account_stop_reason"] == "account_stop_loss"
+
+
+def test_repeat_cycle_metadata_and_level_ids_reset_per_cycle() -> None:
+    result = _run(
+            [
+                _kline(0, open_price="100", high="104", low="98.5", close="103"),
+                _kline(1, open_price="100", high="104", low="98.5", close="103"),
+                _kline(2, open_price="100", high="100", low="100", close="100"),
+            ],
+        _strategy(cycle_mode="repeat"),
+    )
+
+    buys = [trade for trade in result.trades if trade.side == "buy"]
+    assert buys[0].metadata["cycle_id"] == 1
+    assert buys[0].metadata["global_trade_sequence"] == 1
+    assert buys[1].metadata["unique_level_id"] == buys[3].metadata["unique_level_id"]
+    assert buys[1].metadata["cycle_id"] != buys[3].metadata["cycle_id"]
+    assert result.metrics["total_fees"] == pytest.approx(sum(trade.fee for trade in result.trades))
+    assert result.final_equity == pytest.approx(result.metrics["capital_remaining"])
